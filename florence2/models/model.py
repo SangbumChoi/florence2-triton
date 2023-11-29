@@ -1,46 +1,72 @@
 import torch
 import torch.nn as nn
-from florence2.models.backbone import davit
+from florence2.models.backbone.davit import DaViT_base, DaViT_large_window12_384
+from florence2.models.head.bart import Bart
+from florence2.models.projection.linear import LinearProjection
 
 
 class Florence2(nn.Module):
     r"""Florence 2 model
 
     Args:
-        patch_size (int | tuple(int)): Patch size. Default: 4
-        in_chans (int): Number of input image channels. Default: 3
-        num_classes (int): Number of classes for classification head. Default: 1000
-        embed_dims (tuple(int)): Patch embedding dimension. Default: (64, 128, 192, 256)
-        num_heads (tuple(int)): Number of attention heads in different layers. Default: (4, 8, 12, 16)
-        window_size (int): Window size. Default: 7
-        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4
-        qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: True
-        drop_path_rate (float): Stochastic depth rate. Default: 0.1
-        norm_layer (nn.Module): Normalization layer. Default: nn.LayerNorm.
-        attention_types (tuple(str)): Dual attention types.
-        ffn (bool): If False, pure attention network without FFNs
-        overlapped_patch (bool): If True, use overlapped patch division during patch merging.
+        config (dict) :
+            backbone (dict):
+                type (str) : backbone_type for DaViT. Default: base
+                weight (str): pretrained weight path for backbone model. Default: None
+                return_feature (bool): exclude classification head for backbone. Default: True
     """
 
-    def __init__(self, backbone_name):
+    def __init__(
+        self,
+        config: dict,
+    ):
         super().__init__()
 
-        if backbone_name == "base":
-            self.backbone = davit.DaViT_base(pretrained=False, return_feature=True)
-        elif backbone_name == "large":
-            self.backbone = davit.DaViT_large_window12_384(
-                pretrained=False, return_feature=True
+        backbone_type = config["backbone"]["type"]
+        backbone_weight = config["backbone"]["weight"]
+        backbone_return_feature = config["backbone"]["return_feature"]
+
+        if backbone_type == "base":
+            self.image_encoder = DaViT_base(
+                pretrained=backbone_weight, return_feature=backbone_return_feature
+            )
+        elif backbone_type == "large":
+            self.image_encoder = DaViT_large_window12_384(
+                pretrained=backbone_weight, return_feature=backbone_return_feature
             )
         else:
-            assert False, f"backbone_name is {backbone_name} which is not defined"
+            assert False, f"backbone_name is {backbone_type} which is not defined"
 
-    def forward(self, x):
-        x = self.backbone(x)
-        return x
+        self.visual_projection = LinearProjection(
+            in_features=1024, hidden_features=1024
+        )
+
+        self.transformer = Bart(model_repo="pytorch/fairseq", model_name="bart.large")
+
+    def encode_image(self, image):
+        image_feature = self.image_encoder(image)
+        return image_feature
+
+    def encode_text(self, text):
+        text_feature = self.text_encoder(text)
+        return text_feature
+
+    def forward(self, image, text):
+        image_features = self.encode_image(image)
+        text_features = self.encode_text(text)
+
+        # single step visual projection
+        image_features = self.visual_projection(image_features)
+
+        concat_features = torch.cat([image_features, text_features])
+
+        output = self.transformer(concat_features)
+        return output
 
 
 if __name__ == "__main__":
-    florence_model = Florence2("base")
+    config = {"backbone": {"type": "base", "weight": False, "return_feature": True}}
+    florence_model = Florence2(config=config)
     x = torch.rand([1, 3, 224, 224])
     y = florence_model(x)
     print("output", y.shape)
