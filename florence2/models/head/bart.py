@@ -1,29 +1,39 @@
-import torch
 import torch.nn as nn
+
+from transformers import BartForConditionalGeneration, BartTokenizer
 
 
 class Bart(nn.Module):
-    def __init__(self, model_repo, model_name):
+    def __init__(self, model_name):
         super().__init__()
 
-        bart = torch.hub.load(model_repo, model_name)
-        self.bart = bart
+        self.model = BartForConditionalGeneration.from_pretrained(
+            model_name, forced_bos_token_id=0
+        )
+        self.tokenizer = BartTokenizer.from_pretrained(model_name)
 
     def encode(self, text):
-        tokens = self.bart.encode(text)
+        tokens = self.tokenizer(text, return_tensors="pt")
         return tokens
 
-    def extract_features(self, tokens, return_all_hiddens=False):
-        last_layer_features = self.bart.extract_features(tokens, return_all_hiddens)
+    def extract_embedding(self, tokens):
+        embedding = self.model.model.shared(tokens)
+        return embedding
 
-        return last_layer_features
+    def forward(self, inputs_embeds, decoder_input_ids):
+        output = self.model(
+            inputs_embeds=inputs_embeds, decoder_input_ids=decoder_input_ids
+        )
+        return output
 
 
 if __name__ == "__main__":
-    bart = Bart(model_repo="pytorch/fairseq", model_name="bart.large")
+    bart = Bart(model_name="facebook/bart-large")
     text = "This is the test phrase"
-    tokens = bart.encode(text)
-    features = bart.extract_features(tokens=tokens)
-    print("output token : ", tokens.shape)
-    print("output features : ", features.shape)
+    tokens = bart.encode(text)["input_ids"]
+    embedding = bart.extract_embedding(tokens=tokens)
+    output = bart.forward(inputs_embeds=embedding, decoder_input_ids=tokens)
     print("input : ", text)
+    print("output token : ", tokens.shape)
+    print("output embedding : ", embedding.shape)
+    print("output : ", output)

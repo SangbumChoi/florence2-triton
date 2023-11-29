@@ -41,26 +41,28 @@ class Florence2(nn.Module):
             in_features=1024, hidden_features=1024
         )
 
-        self.transformer = Bart(model_repo="pytorch/fairseq", model_name="bart.large")
+        self.bart = Bart(model_name="facebook/bart-large")
 
     def encode_image(self, image):
         image_feature = self.image_encoder(image)
         return image_feature
 
     def encode_text(self, text):
-        text_feature = self.text_encoder(text)
-        return text_feature
+        token = self.bart.encode(text=text)
+        text_token = token["input_ids"]
+        text_feature = self.bart.extract_embedding(tokens=text_token)
+        return text_feature, text_token
 
     def forward(self, image, text):
         image_features = self.encode_image(image)
-        text_features = self.encode_text(text)
+        text_features, text_token = self.encode_text(text)
 
         # single step visual projection
         image_features = self.visual_projection(image_features)
 
-        concat_features = torch.cat([image_features, text_features])
+        concat_features = torch.cat([image_features, text_features], dim=1)
 
-        output = self.transformer(concat_features)
+        output = self.bart(inputs_embeds=concat_features, decoder_input_ids=text_token)
         return output
 
 
@@ -68,6 +70,7 @@ if __name__ == "__main__":
     config = {"backbone": {"type": "base", "weight": False, "return_feature": True}}
     florence_model = Florence2(config=config)
     x = torch.rand([1, 3, 224, 224])
-    y = florence_model(x)
-    print("output", y.shape)
+    text = ["This is the test text"]
+    y = florence_model(x, text)
     print("input", x.shape)
+    print("output", y)
